@@ -66,7 +66,7 @@ jobs:
         run: python setup.py py2app
 
       - name: Show dist contents
-        run: ls -la dist && codesign --version
+        run: ls -la dist
 
       - name: Detect built app path
         run: |
