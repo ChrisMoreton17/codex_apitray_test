@@ -65,6 +65,19 @@ jobs:
       - name: Show dist contents
         run: ls -la dist && codesign --version
 
+      - name: Detect built app path
+        run: |
+          set -e
+          APP_PATH=$(ls -1d dist/*.app | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app found in dist/" >&2
+            exit 1
+          fi
+          APP_NAME=$(basename "$APP_PATH" .app)
+          echo "Detected app: $APP_NAME at $APP_PATH"
+          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+
       - name: Create temporary keychain
         if: env.MAC_CERT_P12 != ''
         run: |
@@ -84,13 +97,13 @@ jobs:
         if: env.MAC_CERT_P12 != ''
         run: |
           codesign --deep --force --options runtime --timestamp \
-            --sign "$MAC_CODESIGN_IDENTITY" "dist/${APP_NAME}.app"
-          codesign --verify --deep --strict --verbose=2 "dist/${APP_NAME}.app"
+            --sign "$MAC_CODESIGN_IDENTITY" "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
       - name: Notarize with notarytool
         if: env.NOTARY_APPLE_ID != '' && env.NOTARY_APP_PASSWORD != '' && env.NOTARY_TEAM_ID != ''
         run: |
-          xcrun notarytool submit "dist/${APP_NAME}.app" \
+          xcrun notarytool submit "$APP_PATH" \
             --apple-id "$NOTARY_APPLE_ID" \
             --password "$NOTARY_APP_PASSWORD" \
             --team-id "$NOTARY_TEAM_ID" \
@@ -98,18 +111,18 @@ jobs:
 
       - name: Staple ticket
         if: env.NOTARY_APPLE_ID != '' && env.NOTARY_APP_PASSWORD != '' && env.NOTARY_TEAM_ID != ''
-        run: xcrun stapler staple "dist/${APP_NAME}.app"
+        run: xcrun stapler staple "$APP_PATH"
 
       - name: Create DMG
-        run: hdiutil create -volname "${APP_NAME}" -srcfolder "dist/${APP_NAME}.app" -ov -format UDZO "dist/${APP_NAME}.dmg"
+        run: hdiutil create -volname "${APP_NAME}" -srcfolder "$APP_PATH" -ov -format UDZO "dist/${APP_NAME}.dmg"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-app
           path: |
-            dist/${APP_NAME}.app
-            dist/${APP_NAME}.dmg
+            ${{ env.APP_PATH }}
+            dist/${{ env.APP_NAME }}.dmg
 
       - name: Release
         uses: softprops/action-gh-release@v2
