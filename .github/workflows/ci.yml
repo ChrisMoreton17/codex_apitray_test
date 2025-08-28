@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*.*.*", "v*.*", "v*"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (core)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install deps (test-only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt requests
+
+      - name: Run tests
+        run: pytest -q
+
+  build-macos:
+    name: Build macOS app
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    env:
+      APP_NAME: API Test Tray
+      MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+      MAC_CERT_P12_PASSWORD: ${{ secrets.MAC_CERT_P12_PASSWORD }}
+      MAC_CODESIGN_IDENTITY: ${{ secrets.MAC_CODESIGN_IDENTITY }}
+      MAC_KEYCHAIN_PASSWORD: ${{ secrets.MAC_KEYCHAIN_PASSWORD }}
+      NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+      NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
+      NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install py2app
+
+      - name: Build .app with py2app
+        run: python setup.py py2app
+
+      - name: Show dist contents
+        run: ls -la dist && codesign --version
+
+      - name: Create temporary keychain
+        if: env.MAC_CERT_P12 != ''
+        run: |
+          security create-keychain -p "$MAC_KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security unlock-keychain -p "$MAC_KEYCHAIN_PASSWORD" build.keychain
+          security list-keychains -s build.keychain login.keychain
+
+      - name: Import signing certificate
+        if: env.MAC_CERT_P12 != ''
+        run: |
+          echo "$MAC_CERT_P12" | base64 --decode > certificate.p12
+          security import certificate.p12 -k build.keychain -P "$MAC_CERT_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$MAC_KEYCHAIN_PASSWORD" build.keychain
+
+      - name: Codesign .app
+        if: env.MAC_CERT_P12 != ''
+        run: |
+          codesign --deep --force --options runtime --timestamp \
+            --sign "$MAC_CODESIGN_IDENTITY" "dist/${APP_NAME}.app"
+          codesign --verify --deep --strict --verbose=2 "dist/${APP_NAME}.app"
+
+      - name: Notarize with notarytool
+        if: env.NOTARY_APPLE_ID != '' && env.NOTARY_APP_PASSWORD != '' && env.NOTARY_TEAM_ID != ''
+        run: |
+          xcrun notarytool submit "dist/${APP_NAME}.app" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --password "$NOTARY_APP_PASSWORD" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --wait
+
+      - name: Staple ticket
+        if: env.NOTARY_APPLE_ID != '' && env.NOTARY_APP_PASSWORD != '' && env.NOTARY_TEAM_ID != ''
+        run: xcrun stapler staple "dist/${APP_NAME}.app"
+
+      - name: Create DMG
+        run: hdiutil create -volname "${APP_NAME}" -srcfolder "dist/${APP_NAME}.app" -ov -format UDZO "dist/${APP_NAME}.dmg"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: |
+            dist/${APP_NAME}.app
+            dist/${APP_NAME}.dmg
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/${{ env.APP_NAME }}.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

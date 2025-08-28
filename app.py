@@ -1,35 +1,9 @@
-import json
 import os
 import sys
-from pathlib import Path
 
-import requests
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-CONFIG_PATH = Path.home() / '.api_tray_config.json'
-
-
-def load_config():
-    if CONFIG_PATH.exists():
-        with CONFIG_PATH.open('r', encoding='utf-8') as f:
-            return json.load(f)
-    return {'api_url': '', 'api_key': ''}
-
-
-def save_config(config):
-    with CONFIG_PATH.open('w', encoding='utf-8') as f:
-        json.dump(config, f)
-
-
-def check_api(api_url: str, api_key: str) -> bool:
-    if not api_url:
-        return False
-    try:
-        headers = {'Authorization': f'Bearer {api_key}'} if api_key else {}
-        response = requests.get(api_url, headers=headers, timeout=5)
-        return response.ok
-    except requests.RequestException:
-        return False
+from core import load_config, save_config, check_api
 
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -63,12 +37,48 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
         super().__init__()
         self.app = app
         self.config = load_config()
+        # Backfill defaults for newly added settings
+        self.config.setdefault('interval_seconds', 60)
+        self.config.setdefault('notify_mode', 'all')
         self.setIcon(self._create_icon('gray'))
         self.setToolTip('API Status Checker')
+        self.last_ok = None
 
         menu = QtWidgets.QMenu()
         check_action = menu.addAction('Check Now')
         check_action.triggered.connect(self.update_status)
+        menu.addSeparator()
+        set_url_action = menu.addAction('Set API URL…')
+        set_url_action.triggered.connect(self.set_api_url)
+        set_key_action = menu.addAction('Set API Key…')
+        set_key_action.triggered.connect(self.set_api_key)
+        set_interval_action = menu.addAction('Set Interval…')
+        set_interval_action.triggered.connect(self.set_interval)
+        # Notifications submenu
+        notif_menu = menu.addMenu('Notifications')
+        self.notifications_group = QtWidgets.QActionGroup(self)
+        self.notifications_group.setExclusive(True)
+        self.notif_all_action = notif_menu.addAction('All (Down + Recovered)')
+        self.notif_all_action.setCheckable(True)
+        self.notif_fail_action = notif_menu.addAction('Failures Only')
+        self.notif_fail_action.setCheckable(True)
+        self.notif_off_action = notif_menu.addAction('Off')
+        self.notif_off_action.setCheckable(True)
+        self.notifications_group.addAction(self.notif_all_action)
+        self.notifications_group.addAction(self.notif_fail_action)
+        self.notifications_group.addAction(self.notif_off_action)
+        # Reflect current mode
+        mode = self.config.get('notify_mode', 'all')
+        if mode == 'fail':
+            self.notif_fail_action.setChecked(True)
+        elif mode == 'off':
+            self.notif_off_action.setChecked(True)
+        else:
+            self.notif_all_action.setChecked(True)
+        # Connect changes
+        self.notif_all_action.triggered.connect(lambda: self.set_notify_mode('all'))
+        self.notif_fail_action.triggered.connect(lambda: self.set_notify_mode('fail'))
+        self.notif_off_action.triggered.connect(lambda: self.set_notify_mode('off'))
         settings_action = menu.addAction('Settings')
         settings_action.triggered.connect(self.show_settings)
         menu.addSeparator()
@@ -78,7 +88,7 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
 
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.update_status)
-        self.timer.start(60000)  # check every minute
+        self.update_timer()
 
         if not self.config.get('api_url'):
             self.show_settings()
@@ -103,18 +113,81 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
         dialog = SettingsDialog(config=self.config)
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             self.config = dialog.get_values()
+            # keep existing interval if not managed by dialog
+            self.config.setdefault('interval_seconds', load_config().get('interval_seconds', 60))
+            self.config.setdefault('notify_mode', load_config().get('notify_mode', 'all'))
             save_config(self.config)
+            self.update_timer()
             self.update_status()
 
     def update_status(self):
         ok = check_api(self.config.get('api_url'), self.config.get('api_key'))
         color = 'green' if ok else 'red'
         self.setIcon(self._create_icon(color))
-        self.setToolTip(f'API status: {"OK" if ok else "DOWN"}')
+        interval = int(self.config.get('interval_seconds', 60))
+        self.setToolTip(f'API status: {"OK" if ok else "DOWN"} • every {interval}s')
+        # Notifications according to mode
+        mode = self.config.get('notify_mode', 'all')
+        # Notify on transition to DOWN
+        if self.last_ok is True and not ok and mode in ('all', 'fail'):
+            self.showMessage('API Down', 'The API did not respond successfully.', QtWidgets.QSystemTrayIcon.Critical, 5000)
+        # Notify on recovery
+        if self.last_ok is False and ok and mode == 'all':
+            self.showMessage('API Recovered', 'The API is responding again.', QtWidgets.QSystemTrayIcon.Information, 4000)
+        self.last_ok = ok
+
+    def update_timer(self):
+        interval_ms = max(5, int(self.config.get('interval_seconds', 60))) * 1000
+        self.timer.start(interval_ms)
+
+    def set_api_url(self):
+        current = self.config.get('api_url', '')
+        text, ok = QtWidgets.QInputDialog.getText(None, 'Set API URL', 'Enter API URL:', QtWidgets.QLineEdit.Normal, current)
+        if ok and text:
+            self.config['api_url'] = text.strip()
+            save_config(self.config)
+            self.update_status()
+
+    def set_api_key(self):
+        current = self.config.get('api_key', '')
+        text, ok = QtWidgets.QInputDialog.getText(None, 'Set API Key', 'Enter API Key:', QtWidgets.QLineEdit.Password, current)
+        if ok:
+            self.config['api_key'] = text
+            save_config(self.config)
+            self.update_status()
+
+    def set_interval(self):
+        current = int(self.config.get('interval_seconds', 60))
+        value, ok = QtWidgets.QInputDialog.getInt(None, 'Set Interval', 'Seconds between checks:', current, 5, 86400, 1)
+        if ok:
+            self.config['interval_seconds'] = int(value)
+            save_config(self.config)
+            self.update_timer()
+
+    def set_notify_mode(self, mode: str):
+        self.config['notify_mode'] = mode
+        save_config(self.config)
 
 
 if __name__ == '__main__':
-    os.environ['QT_QPA_PLATFORM'] = os.environ.get('QT_QPA_PLATFORM', 'offscreen')
+    os.environ['QT_QPA_PLATFORM'] = os.environ.get('QT_QPA_PLATFORM', 'cocoa')
+    # Ensure system tray is available
+    if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+        # Fail fast if no tray (e.g., remote sessions without menu bar)
+        QtWidgets.QMessageBox.critical(None, 'API Tray Status', 'No system tray available on this system.')
+        sys.exit(1)
+
     app = QtWidgets.QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+
+    # On macOS, hide Dock icon when running unbundled via python app.py
+    if sys.platform == 'darwin':
+        try:
+            from AppKit import NSApplication, NSApplicationActivationPolicyProhibited
+            NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyProhibited)
+        except Exception:
+            # AppKit (pyobjc) not installed; skipping dock-hide in script mode.
+            pass
+
     tray = TrayApp(app)
     sys.exit(app.exec_())
