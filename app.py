@@ -7,9 +7,9 @@ from core import load_config, save_config, check_api
 
 
 class SettingsDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None, config=None):
+    def __init__(self, parent=None, config=None, title='API Settings', first_run=False):
         super().__init__(parent)
-        self.setWindowTitle('API Settings')
+        self.setWindowTitle(title)
         self.api_url_edit = QtWidgets.QLineEdit(config.get('api_url', ''))
         self.api_key_edit = QtWidgets.QLineEdit(config.get('api_key', ''))
         self.api_key_edit.setEchoMode(QtWidgets.QLineEdit.Password)
@@ -28,6 +28,14 @@ class SettingsDialog(QtWidgets.QDialog):
         layout.addLayout(form)
         layout.addWidget(buttons)
 
+        # Make sure the dialog is visible and front-most on first run in menu bar mode
+        if first_run:
+            self.setModal(True)
+            # Keep on top so it doesn't get lost behind other apps
+            self.setWindowFlag(QtCore.Qt.WindowStaysOnTopHint, True)
+            # Utility/tool window style often plays nicer for LSUIElement apps
+            self.setWindowFlag(QtCore.Qt.Tool, True)
+
     def get_values(self):
         return {'api_url': self.api_url_edit.text(), 'api_key': self.api_key_edit.text()}
 
@@ -40,7 +48,8 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
         # Backfill defaults for newly added settings
         self.config.setdefault('interval_seconds', 60)
         self.config.setdefault('notify_mode', 'all')
-        self.setIcon(self._create_icon('gray'))
+        # Initial neutral icon before first check
+        self.setIcon(self._create_icon('gray', label='…'))
         self.setToolTip('API Status Checker')
         self.last_ok = None
 
@@ -91,26 +100,49 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
         self.update_timer()
 
         if not self.config.get('api_url'):
-            self.show_settings()
+            self.show_first_run()
         else:
             self.update_status()
 
         self.show()
+        # On launch, give a small nudge so users notice it's running
+        try:
+            self.showMessage('API Test Tray', 'Running in the menu bar. Click the icon to open settings.', QtWidgets.QSystemTrayIcon.Information, 4000)
+        except Exception:
+            pass
 
-    def _create_icon(self, color: str) -> QtGui.QIcon:
-        pixmap = QtGui.QPixmap(16, 16)
-        pixmap.fill(QtCore.Qt.transparent)
-        painter = QtGui.QPainter(pixmap)
+    def _create_icon(self, color: str, label: str = '') -> QtGui.QIcon:
+        # Draw a larger pixmap for crispness on HiDPI and scale down
+        size = 64
+        pm = QtGui.QPixmap(size, size)
+        pm.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(pm)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        brush = QtGui.QBrush(QtGui.QColor(color))
-        painter.setBrush(brush)
-        painter.setPen(QtCore.Qt.NoPen)
-        painter.drawEllipse(0, 0, 15, 15)
+        # Outer border for visibility in busy menu bars
+        pen = QtGui.QPen(QtGui.QColor('#000000'))
+        pen.setWidthF(size * 0.05)
+        painter.setPen(pen)
+        painter.setBrush(QtGui.QBrush(QtGui.QColor(color)))
+        margin = size * 0.08
+        painter.drawEllipse(margin, margin, size - 2 * margin, size - 2 * margin)
+        # Label (✓, !, …) for readability
+        if label:
+            font = QtGui.QFont()
+            font.setBold(True)
+            font.setPointSizeF(size * 0.45)
+            painter.setFont(font)
+            painter.setPen(QtGui.QPen(QtGui.QColor('#FFFFFF')))
+            rect = QtCore.QRectF(0, 0, size, size)
+            painter.drawText(rect, QtCore.Qt.AlignCenter, label)
         painter.end()
-        return QtGui.QIcon(pixmap)
+        icon = QtGui.QIcon()
+        icon.addPixmap(pm.scaled(16, 16, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+        icon.addPixmap(pm.scaled(32, 32, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+        icon.addPixmap(pm.scaled(64, 64, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+        return icon
 
     def show_settings(self):
-        dialog = SettingsDialog(config=self.config)
+        dialog = SettingsDialog(config=self.config, title='API Settings')
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             self.config = dialog.get_values()
             # keep existing interval if not managed by dialog
@@ -120,10 +152,33 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
             self.update_timer()
             self.update_status()
 
+    def show_first_run(self):
+        # Try to bring our app and dialog to front on macOS LSUIElement
+        if sys.platform == 'darwin':
+            try:
+                from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+                app = NSApplication.sharedApplication()
+                # Accessory policy still keeps us as a UIElement without Dock, but allows focus
+                app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+                app.activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
+        dialog = SettingsDialog(config=self.config, title='Welcome — Set API Endpoint', first_run=True)
+        dialog.activateWindow()
+        dialog.raise_()
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            self.config = dialog.get_values()
+            self.config.setdefault('interval_seconds', load_config().get('interval_seconds', 60))
+            self.config.setdefault('notify_mode', load_config().get('notify_mode', 'all'))
+            save_config(self.config)
+            self.update_timer()
+            self.update_status()
+
     def update_status(self):
         ok = check_api(self.config.get('api_url'), self.config.get('api_key'))
         color = 'green' if ok else 'red'
-        self.setIcon(self._create_icon(color))
+        label = '✓' if ok else '!'
+        self.setIcon(self._create_icon(color, label=label))
         interval = int(self.config.get('interval_seconds', 60))
         self.setToolTip(f'API status: {"OK" if ok else "DOWN"} • every {interval}s')
         # Notifications according to mode
