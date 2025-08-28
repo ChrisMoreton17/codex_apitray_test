@@ -20,13 +20,21 @@ def save_config(config: Dict[str, object]) -> None:
         json.dump(config, f)
 
 
-def check_api(api_url: str, api_key: str) -> bool:
+def check_api_details(api_url: str, api_key: str):
+    """Return (ok: bool, status: int|None, error: str|None).
+
+    Makes a GET request to api_url with optional Bearer api_key.
+    """
     if not api_url:
-        return False
+        return False, None, None
     try:
         headers = {'Authorization': f'Bearer {api_key}'} if api_key else {}
         response = requests.get(api_url, headers=headers, timeout=5)
-        return response.ok
-    except requests.RequestException:
-        return False
+        return bool(response.ok), int(getattr(response, 'status_code', 0) or 0), None
+    except requests.RequestException as e:
+        return False, None, str(e)
 
+
+def check_api(api_url: str, api_key: str) -> bool:
+    ok, _status, _err = check_api_details(api_url, api_key)
+    return ok

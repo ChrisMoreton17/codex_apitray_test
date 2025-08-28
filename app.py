@@ -1,5 +1,7 @@
 import os
 import sys
+import logging
+from pathlib import Path
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 
@@ -40,10 +42,34 @@ class SettingsDialog(QtWidgets.QDialog):
         return {'api_url': self.api_url_edit.text(), 'api_key': self.api_key_edit.text()}
 
 
+def _setup_logging():
+    log = logging.getLogger('apitray')
+    if log.handlers:
+        return log
+    log.setLevel(logging.INFO)
+    try:
+        log_dir = Path.home() / 'Library' / 'Logs'
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / 'api_test_tray.log'
+    except Exception:
+        log_path = Path.home() / 'api_test_tray.log'
+    fh = logging.FileHandler(str(log_path), encoding='utf-8')
+    fmt = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+    fh.setFormatter(fmt)
+    log.addHandler(fh)
+    # Also echo to stderr when run from terminal
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    log.addHandler(sh)
+    log.info('Logging initialized → %s', log_path)
+    return log
+
+
 class TrayApp(QtWidgets.QSystemTrayIcon):
     def __init__(self, app):
         super().__init__()
         self.app = app
+        self.log = _setup_logging()
         self.config = load_config()
         # Backfill defaults for newly added settings
         self.config.setdefault('interval_seconds', 60)
@@ -52,6 +78,10 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
         self.setIcon(self._create_icon('gray', label='…'))
         self.setToolTip('API Status Checker')
         self.last_ok = None
+        self.log.info('App started. Config loaded (url=%s, interval=%ss, notify=%s).',
+                      ('set' if self.config.get('api_url') else 'missing'),
+                      self.config.get('interval_seconds', 60),
+                      self.config.get('notify_mode', 'all'))
 
         menu = QtWidgets.QMenu()
         check_action = menu.addAction('Check Now')
@@ -175,12 +205,28 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
             self.update_status()
 
     def update_status(self):
-        ok = check_api(self.config.get('api_url'), self.config.get('api_key'))
+        ok = False
+        status_code = None
+        err = None
+        try:
+            from core import check_api_details
+            ok, status_code, err = check_api_details(self.config.get('api_url'), self.config.get('api_key'))
+        except Exception as e:
+            err = str(e)
         color = 'green' if ok else 'red'
         label = '✓' if ok else '!'
         self.setIcon(self._create_icon(color, label=label))
         interval = int(self.config.get('interval_seconds', 60))
         self.setToolTip(f'API status: {"OK" if ok else "DOWN"} • every {interval}s')
+        # Log result
+        url_state = 'set' if self.config.get('api_url') else 'missing'
+        if ok:
+            self.log.info('Check OK (url=%s, status=%s)', url_state, status_code)
+        else:
+            if err:
+                self.log.warning('Check DOWN (url=%s, error=%s)', url_state, err)
+            else:
+                self.log.warning('Check DOWN (url=%s, status=%s)', url_state, status_code)
         # Notifications according to mode
         mode = self.config.get('notify_mode', 'all')
         # Notify on transition to DOWN

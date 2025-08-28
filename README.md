@@ -41,6 +41,20 @@ Notifications
 - Alerts when the API recovers and is responding again.
  - Configure under Tray > Notifications: All, Failures Only, or Off.
 
+### Debug window (live logs)
+
+If you want a visible window alongside the menu bar app to see what’s happening in real time:
+
+```bash
+python debug_ui.py
+```
+
+This opens a small window that:
+- Shows your current config (URL, interval, notifications)
+- Tails the app log at `~/Library/Logs/api_test_tray.log` (macOS)
+- Lets you trigger a “Check Now” to test the endpoint
+- Buttons to open the config and log file
+
 ## Testing
 
 Run unit tests (non-UI logic):
