@@ -388,14 +388,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
 if __name__ == '__main__':
     os.environ['QT_QPA_PLATFORM'] = os.environ.get('QT_QPA_PLATFORM', 'cocoa')
-    # Ensure system tray is available
-    if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
-        # Fail fast if no tray (e.g., remote sessions without menu bar)
-        QtWidgets.QMessageBox.critical(None, 'API Tray Status', 'No system tray available on this system.')
-        sys.exit(1)
-
+    # Create the application FIRST before any QtWidgets calls that touch platform state.
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    # Ensure system tray is available (after app exists)
+    try:
+        tray_available = QtWidgets.QSystemTrayIcon.isSystemTrayAvailable()
+    except Exception:
+        tray_available = False
+    if not tray_available:
+        # Show a dialog informing the user and keep the main window available for diagnostics
+        QtWidgets.QMessageBox.critical(None, 'API Tray Status', 'No system tray available on this system. Opening app window for diagnostics.')
+        # Proceed without a tray; the main window can still be used
 
     # On macOS, allow dock presence; we'll toggle to Regular when opening windows
 
