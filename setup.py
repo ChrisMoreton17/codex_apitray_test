@@ -3,7 +3,7 @@ from setuptools import setup
 APP = ['app.py']  # entry point script
 OPTIONS = {
     # 'argv_emulation': True,   # remove this line to avoid Carbon dependency
-    'packages': ['requests'],
+    'packages': ['requests', 'charset_normalizer'],
     'includes': [
         'PyQt5',
         'PyQt5.QtCore',
@@ -12,7 +12,7 @@ OPTIONS = {
         'sip',
         'core',
     ],
-    'qt_plugins': ['platforms'],  # include Cocoa platform plugin for PyQt
+    'qt_plugins': ['platforms', 'styles', 'imageformats'],  # include key Qt plugin groups
     'plist': {
         'LSUIElement': False,
         'CFBundleName': 'API Test Tray',

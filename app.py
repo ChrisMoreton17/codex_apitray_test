@@ -154,11 +154,11 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         # Outer border for visibility in busy menu bars
         pen = QtGui.QPen(QtGui.QColor('#000000'))
-        pen.setWidthF(size * 0.05)
+        pen.setWidth(int(size * 0.05))
         painter.setPen(pen)
         painter.setBrush(QtGui.QBrush(QtGui.QColor(color)))
-        margin = size * 0.08
-        painter.drawEllipse(margin, margin, size - 2 * margin, size - 2 * margin)
+        margin = int(size * 0.08)
+        painter.drawEllipse(int(margin), int(margin), int(size - 2 * margin), int(size - 2 * margin))
         # Label (✓, !, …) for readability
         if label:
             font = QtGui.QFont()
