@@ -73,6 +73,8 @@ Build a macOS app bundle with py2app:
 
 ```bash
 python3 -m pip install py2app
+python3 -m pip install pillow
+python3 scripts/make_icon.py && iconutil -c icns assets/AppIcon.iconset -o assets/AppIcon.icns
 python3 setup.py py2app
 open dist
 ```
@@ -91,6 +93,7 @@ To distribute outside the App Store, sign with a Developer ID certificate and no
 
 - Ensure Xcode command line tools are installed and you have a Developer ID Application certificate in your login keychain.
 - Set a unique bundle identifier in `setup.py`.
+  - Example: `com.yourcompany.apitesttray`
 - Codesign the built app:
 
 ```bash
@@ -149,6 +152,7 @@ Set these repository secrets (Settings → Secrets and variables → Actions →
 Notes:
 - If signing secrets are omitted, the workflow still builds and uploads unsigned artifacts for inspection.
 - If notarization secrets are omitted, steps are skipped; you can staple locally later.
+ - Ensure the bundle identifier in `setup.py` matches your team’s preferences; the signing identity does not have to embed the bundle ID but should belong to the same Apple Developer Team.
 
 ### Releasing
 

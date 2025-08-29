@@ -62,7 +62,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install py2app
+          pip install py2app pillow
+
+      - name: Generate .icns icon
+        run: |
+          python scripts/make_icon.py
+          iconutil -c icns assets/AppIcon.iconset -o assets/AppIcon.icns
 
       - name: Build .app with py2app
         run: python setup.py py2app

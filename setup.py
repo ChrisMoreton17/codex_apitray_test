@@ -13,6 +13,7 @@ OPTIONS = {
         'core',
     ],
     'qt_plugins': ['platforms', 'styles', 'imageformats'],  # include key Qt plugin groups
+    'iconfile': 'assets/AppIcon.icns',
     'plist': {
         'LSUIElement': False,
         'CFBundleName': 'API Test Tray',
