@@ -1,6 +1,34 @@
 # API Test Tray
 
-This project provides a small cross-platform system tray application that checks the status of an API and displays a green or red icon accordingly. Users can configure the API URL and optional API key through a settings dialog. Configuration values are stored in `~/.api_tray_config.json`.
+API Test Tray is a lightweight menu bar (system tray) and Dock app that pings an HTTP endpoint on an interval and shows a clear up/down status. It is designed to be simple, unobtrusive, and reliable for quick API health checks during development or operations.
+
+At a glance, you get:
+- A colored tray icon with a bold badge (✓ for OK, ! for Down).
+- A Dock-visible window for setup, status, and quick actions.
+- First-run onboarding to capture your API URL and optional API key.
+- Notifications on failures and (optionally) recoveries.
+- Logs for diagnostics and an optional debug window that tails them live.
+
+Configuration is stored in `~/.api_tray_config.json`.
+
+## Features
+
+- Status indicator in the menu bar with an easily visible icon.
+- First-run settings dialog and a Dock window for ongoing control.
+- Manual “Check Now”, adjustable interval, and notification modes (All, Failures Only, Off).
+- Persistent config (URL, API key, interval, notifications).
+- Structured logging to `~/Library/Logs/api_test_tray.log` (macOS) for troubleshooting.
+- Optional debug window (`python debug_ui.py`) to tail logs and trigger checks.
+
+## Tech Stack
+
+- Python 3.10
+- PyQt5 (Qt Widgets for tray icon, menus, and window)
+- Requests (HTTP checks)
+- Pillow + iconutil (build-time .icns icon generation)
+- py2app (macOS app bundling)
+- GitHub Actions (tests, build, codesign, notarization, DMG release)
+- pytest (core logic tests)
 
 ## Setup
 
@@ -29,6 +57,8 @@ On the first run, you will be prompted to enter the API URL and optional API key
 - **Green** – API responded successfully.
 - **Red** – API request failed or returned a non-OK status.
 
+Tip: Use quick test endpoints like `https://httpbin.org/status/200` (OK) and `https://httpbin.org/status/500` (Down).
+
 You can right-click the tray icon to access:
 - Check Now: Trigger an immediate API check
 - Set API URL / Set API Key: Update credentials directly
@@ -40,6 +70,14 @@ Notifications
 - Alerts when the API goes down.
 - Alerts when the API recovers and is responding again.
  - Configure under Tray > Notifications: All, Failures Only, or Off.
+
+### Configuration
+
+The app stores configuration in `~/.api_tray_config.json` with keys:
+- `api_url`: string
+- `api_key`: string (optional, used as `Authorization: Bearer <key>`) 
+- `interval_seconds`: number (default 60)
+- `notify_mode`: `all` | `fail` | `off`
 
 ### App window (Dock) and debug
 
@@ -67,6 +105,14 @@ pytest -q
 
 Tests cover config load/save and API status checks. UI behavior is not exercised.
 
+## How It Works
+
+- The tray icon is a small, high-contrast, dynamically drawn icon with a status badge.
+- Status checks use `requests.get` with a 5s timeout, treating any non-2xx response as Down.
+- State transitions (OK→Down, Down→OK) trigger notifications according to the selected mode.
+- The Dock window provides manual checks, access to settings, and shortcuts to open the config and logs.
+- Logs capture startup and each check result (status or error) for postmortem.
+
 ## Build & Deploy (macOS)
 
 Build a macOS app bundle with py2app:
@@ -86,6 +132,8 @@ bash scripts/build_mac.sh
 ```
 
 Customize the bundle identifier in `setup.py` (`CFBundleIdentifier`) before code signing.
+
+The CI workflow automatically generates a crisp `.icns` Dock icon at build time and includes essential Qt plugins.
 
 ### Code signing and notarization (recommended)
 
@@ -131,6 +179,15 @@ codesign --force --sign "Developer ID Application: Your Name (TEAMID)" "dist/API
 
 Gatekeeper will accept the stapled .app/.dmg on end-user machines.
 
+### Troubleshooting (macOS)
+
+- Remove quarantine after moving the app to Applications:
+  - `xattr -dr com.apple.quarantine "/Applications/API Test Tray.app"`
+- Run from Terminal with Qt plugin debug to see detailed loader output:
+  - `QT_DEBUG_PLUGINS=1 "/Applications/API Test Tray.app/Contents/MacOS/API Test Tray"`
+- Check logs: `open ~/Library/Logs/api_test_tray.log`
+- If you don’t see the tray icon, open the Dock window from the tray menu or first-run prompt; on crowded menu bars the icon might be hidden.
+
 ## GitHub Actions CI/CD
 
 This repo includes a workflow at `.github/workflows/ci.yml` that:
@@ -164,6 +221,15 @@ git push origin v1.0.0
 ```
 
 The workflow builds `dist/API Test Tray.app`, signs/notarizes (if secrets present), creates `dist/API Test Tray.dmg`, uploads artifacts, and publishes a GitHub Release with the DMG attached.
+
+## Roadmap (notifications beyond the desktop)
+
+Future optional integrations for off-device alerts:
+- Slack (Incoming Webhook or Bot token)
+- Email (SMTP or transactional APIs like SendGrid/Mailgun)
+- SMS (Twilio)
+
+These will be added as pluggable notifiers with simple configuration and safe secret handling.
 
 ### How it works (learning)
 
