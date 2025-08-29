@@ -84,6 +84,8 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
                       self.config.get('notify_mode', 'all'))
 
         menu = QtWidgets.QMenu()
+        open_window_action = menu.addAction('Open App Window…')
+        open_window_action.triggered.connect(self.open_main_window)
         check_action = menu.addAction('Check Now')
         check_action.triggered.connect(self.update_status)
         menu.addSeparator()
@@ -131,6 +133,8 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
 
         if not self.config.get('api_url'):
             self.show_first_run()
+            # Also open the main window for clearer onboarding
+            self.open_main_window()
         else:
             self.update_status()
 
@@ -186,10 +190,10 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
         # Try to bring our app and dialog to front on macOS LSUIElement
         if sys.platform == 'darwin':
             try:
-                from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+                from AppKit import NSApplication, NSApplicationActivationPolicyRegular
                 app = NSApplication.sharedApplication()
-                # Accessory policy still keeps us as a UIElement without Dock, but allows focus
-                app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+                # Show a real app UI (Dock + menu) for setup
+                app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
                 app.activateIgnoringOtherApps_(True)
             except Exception:
                 pass
@@ -203,6 +207,23 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
             save_config(self.config)
             self.update_timer()
             self.update_status()
+
+    # --- App window (Dock-visible) ---
+    def open_main_window(self):
+        if not hasattr(self, '_main_window') or self._main_window is None:
+            self._main_window = MainWindow(self)
+        # Ensure Dock presence and focus on macOS
+        if sys.platform == 'darwin':
+            try:
+                from AppKit import NSApplication, NSApplicationActivationPolicyRegular
+                app = NSApplication.sharedApplication()
+                app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+                app.activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
+        self._main_window.show()
+        self._main_window.raise_()
+        self._main_window.activateWindow()
 
     def update_status(self):
         ok = False
@@ -270,6 +291,101 @@ class TrayApp(QtWidgets.QSystemTrayIcon):
         save_config(self.config)
 
 
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self, tray: TrayApp):
+        super().__init__()
+        self.tray = tray
+        self.setWindowTitle('API Test Tray')
+        self.resize(800, 500)
+
+        # Top section: status
+        self.status_label = QtWidgets.QLabel('Status: Unknown')
+        self.detail_label = QtWidgets.QLabel('')
+        status_layout = QtWidgets.QVBoxLayout()
+        status_layout.addWidget(self.status_label)
+        status_layout.addWidget(self.detail_label)
+        status_box = QtWidgets.QGroupBox('Current Status')
+        status_box.setLayout(status_layout)
+
+        # Controls
+        self.btn_check = QtWidgets.QPushButton('Check Now')
+        self.btn_settings = QtWidgets.QPushButton('Open Settings…')
+        self.btn_open_config = QtWidgets.QPushButton('Reveal Config File')
+        self.btn_open_logs = QtWidgets.QPushButton('Reveal Log File')
+        ctrl_layout = QtWidgets.QHBoxLayout()
+        ctrl_layout.addWidget(self.btn_check)
+        ctrl_layout.addWidget(self.btn_settings)
+        ctrl_layout.addStretch(1)
+        ctrl_layout.addWidget(self.btn_open_config)
+        ctrl_layout.addWidget(self.btn_open_logs)
+
+        # Log view
+        self.log_view = QtWidgets.QTextEdit()
+        self.log_view.setReadOnly(True)
+        mono = QtGui.QFont('Menlo' if sys.platform == 'darwin' else 'Monospace')
+        mono.setStyleHint(QtGui.QFont.Monospace)
+        self.log_view.setFont(mono)
+        log_box = QtWidgets.QGroupBox('Recent Activity')
+        v = QtWidgets.QVBoxLayout()
+        v.addWidget(self.log_view)
+        log_box.setLayout(v)
+
+        # Central layout
+        central = QtWidgets.QWidget()
+        cl = QtWidgets.QVBoxLayout(central)
+        cl.addWidget(status_box)
+        cl.addLayout(ctrl_layout)
+        cl.addWidget(log_box, 1)
+        self.setCentralWidget(central)
+
+        # Signals
+        self.btn_check.clicked.connect(self._check_now)
+        self.btn_settings.clicked.connect(self.tray.show_settings)
+        self.btn_open_config.clicked.connect(self._reveal_config)
+        self.btn_open_logs.clicked.connect(self._reveal_logs)
+
+        # Initial refresh
+        self.refresh_from_last()
+
+    def refresh_from_last(self):
+        ok = self.tray.last_ok
+        if ok is None:
+            self.status_label.setText('Status: Not checked yet')
+        else:
+            self.status_label.setText('Status: OK' if ok else 'Status: DOWN')
+        # We only log summaries here; detailed logs are in the file
+        self._append_log('Window opened. Use Check Now to test the endpoint.')
+
+    def _append_log(self, line: str):
+        self.log_view.append(line)
+
+    def _check_now(self):
+        from core import check_api_details
+        cfg = self.tray.config
+        ok, status, err = check_api_details(cfg.get('api_url'), cfg.get('api_key'))
+        if ok:
+            self.status_label.setText(f'Status: OK ({status})')
+            self._append_log(f'Check OK (status={status})')
+        else:
+            self.status_label.setText('Status: DOWN')
+            self._append_log(f'Check DOWN (status={status}, err={err})')
+        # Also update tray icon + internal state
+        self.tray.update_status()
+
+    def _reveal_config(self):
+        from core import CONFIG_PATH
+        if sys.platform == 'darwin':
+            QtCore.QProcess.startDetached('open', [str(CONFIG_PATH)])
+        else:
+            QtCore.QProcess.startDetached(str(CONFIG_PATH))
+
+    def _reveal_logs(self):
+        log_path = Path.home() / ('Library/Logs' if sys.platform == 'darwin' else '') / 'api_test_tray.log'
+        if sys.platform == 'darwin':
+            QtCore.QProcess.startDetached('open', [str(log_path)])
+        else:
+            QtCore.QProcess.startDetached(str(log_path))
+
 if __name__ == '__main__':
     os.environ['QT_QPA_PLATFORM'] = os.environ.get('QT_QPA_PLATFORM', 'cocoa')
     # Ensure system tray is available
@@ -281,14 +397,7 @@ if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
-    # On macOS, hide Dock icon when running unbundled via python app.py
-    if sys.platform == 'darwin':
-        try:
-            from AppKit import NSApplication, NSApplicationActivationPolicyProhibited
-            NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyProhibited)
-        except Exception:
-            # AppKit (pyobjc) not installed; skipping dock-hide in script mode.
-            pass
+    # On macOS, allow dock presence; we'll toggle to Regular when opening windows
 
     tray = TrayApp(app)
     sys.exit(app.exec_())

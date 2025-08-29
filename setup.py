@@ -14,7 +14,7 @@ OPTIONS = {
     ],
     'qt_plugins': ['platforms'],  # include Cocoa platform plugin for PyQt
     'plist': {
-        'LSUIElement': True,
+        'LSUIElement': False,
         'CFBundleName': 'API Test Tray',
         'CFBundleIdentifier': 'com.example.apitesttray',
     },

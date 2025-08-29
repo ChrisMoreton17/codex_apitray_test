@@ -18,7 +18,7 @@ pip install -r requirements-dev.txt
 
 ## Usage
 
-Run the tray application:
+Run the tray application (menu bar + Dock window):
 
 ```bash
 python app.py
@@ -41,9 +41,11 @@ Notifications
 - Alerts when the API recovers and is responding again.
  - Configure under Tray > Notifications: All, Failures Only, or Off.
 
-### Debug window (live logs)
+### App window (Dock) and debug
 
-If you want a visible window alongside the menu bar app to see what’s happening in real time:
+The app now has a Dock-visible window for initial setup and troubleshooting. From the tray icon, choose “Open App Window…”. On first run, this window opens automatically.
+
+For additional diagnostics, you can also run a standalone debug window alongside the app:
 
 ```bash
 python debug_ui.py
