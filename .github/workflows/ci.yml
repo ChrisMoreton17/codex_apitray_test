@@ -119,7 +119,17 @@ jobs:
         run: xcrun stapler staple "$APP_PATH"
 
       - name: Create DMG
-        run: hdiutil create -volname "${APP_NAME}" -srcfolder "$APP_PATH" -ov -format UDZO "dist/${APP_NAME}.dmg"
+        run: |
+          set -e
+          STAGE_DIR="stage_dmg"
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR"
+          # Copy the app to a staging folder to avoid resource contention in dist/
+          cp -R "$APP_PATH" "$STAGE_DIR/${APP_NAME}.app"
+          OUT_DMG="$RUNNER_TEMP/${APP_NAME}.dmg"
+          hdiutil create -volname "${APP_NAME}" -srcfolder "$STAGE_DIR" -ov -format UDZO "$OUT_DMG"
+          mkdir -p dist
+          mv "$OUT_DMG" "dist/${APP_NAME}.dmg"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
